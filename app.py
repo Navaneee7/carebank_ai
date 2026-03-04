@@ -3,7 +3,6 @@ import pandas as pd
 import numpy as np
 from sklearn.ensemble import IsolationForest
 import plotly.express as px
-from prophet import Prophet
 from openai import OpenAI
 
 st.set_page_config(page_title="CareBank AI Pro", layout="wide")
@@ -64,18 +63,12 @@ class ForecastAgent:
     def run(self, df):
         df["Date"] = pd.to_datetime(df["Date"])
         monthly = df.groupby(pd.Grouper(key="Date", freq="M"))["Amount"].sum().reset_index()
-        monthly.columns = ["ds", "y"]
 
         if len(monthly) < 2:
             return None
 
-        model = Prophet()
-        model.fit(monthly)
-
-        future = model.make_future_dataframe(periods=3, freq="M")
-        forecast = model.predict(future)
-
-        return forecast
+        monthly["Forecast"] = monthly["Amount"].rolling(2).mean()
+        return monthly
 
 class AdvisorAgent:
     def run(self, score):
@@ -257,4 +250,5 @@ if uploaded_file:
     )
 
 else:
+
     st.info("Upload a CSV file to activate the AI system.")
