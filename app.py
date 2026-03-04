@@ -4,13 +4,14 @@ import numpy as np
 from sklearn.ensemble import IsolationForest
 import plotly.express as px
 from openai import OpenAI
+import os
 
-st.set_page_config(page_title="CareBank AI Pro", layout="wide")
+st.set_page_config(page_title="CareBank AI", layout="wide")
 
 st.title("💳 CareBank – Agentic AI Financial Intelligence Platform")
 
 # ===============================
-# SIDEBAR CONFIG
+# SIDEBAR SETTINGS
 # ===============================
 
 st.sidebar.title("⚙ Control Panel")
@@ -24,6 +25,8 @@ other_budget = st.sidebar.number_input("Other Budget", value=2000)
 
 if api_key:
     client = OpenAI(api_key=api_key)
+else:
+    client = None
 
 # ===============================
 # SESSION MEMORY
@@ -39,15 +42,19 @@ if "messages" not in st.session_state:
 class SpendingAgent:
     def run(self, df):
         df["Category"] = df["Description"].apply(lambda x:
-            "Food" if "swiggy" in x.lower() or "zomato" in x.lower()
-            else "Transport" if "uber" in x.lower()
-            else "Shopping" if "amazon" in x.lower()
+            "Food" if "swiggy" in str(x).lower() or "zomato" in str(x).lower()
+            else "Transport" if "uber" in str(x).lower()
+            else "Shopping" if "amazon" in str(x).lower()
             else "Other"
         )
         return df
 
 class RiskAgent:
     def run(self, df):
+        if len(df) < 5:
+            df["Anomaly"] = 1
+            return df[df["Anomaly"] == -1]
+
         clf = IsolationForest(contamination=0.1, random_state=42)
         df["Anomaly"] = clf.fit_predict(df[["Amount"]])
         return df[df["Anomaly"] == -1]
@@ -56,13 +63,22 @@ class BudgetAgent:
     def run(self, df):
         income = df[df["Amount"] > 0]["Amount"].sum()
         expense = abs(df[df["Amount"] < 0]["Amount"].sum())
-        score = int(((income - expense) / income) * 100) if income > 0 else 0
+
+        if income == 0:
+            score = 0
+        else:
+            score = int(((income - expense) / income) * 100)
+
         return score, income, expense
 
 class ForecastAgent:
     def run(self, df):
-        df["Date"] = pd.to_datetime(df["Date"])
-        monthly = df.groupby(pd.Grouper(key="Date", freq="M"))["Amount"].sum().reset_index()
+        df["Date"] = pd.to_datetime(df["Date"], errors="coerce")
+        df = df.dropna(subset=["Date"])
+
+        monthly = df.groupby(
+            pd.Grouper(key="Date", freq="M")
+        )["Amount"].sum().reset_index()
 
         if len(monthly) < 2:
             return None
@@ -73,11 +89,11 @@ class ForecastAgent:
 class AdvisorAgent:
     def run(self, score):
         if score > 75:
-            return "🟢 Strong stability. Consider diversified investments."
+            return "🟢 Strong financial stability. Consider diversified investments."
         elif score > 50:
-            return "🟡 Moderate health. Optimize discretionary expenses."
+            return "🟡 Moderate health. Reduce discretionary spending."
         else:
-            return "🔴 Financial risk detected. Immediate correction advised."
+            return "🔴 Financial risk detected. Immediate correction required."
 
 class Orchestrator:
     def __init__(self):
@@ -115,7 +131,9 @@ uploaded_file = st.file_uploader("📂 Upload Transaction CSV", type=["csv"])
 
 if uploaded_file:
     df = pd.read_csv(uploaded_file)
-    df["Amount"] = pd.to_numeric(df["Amount"])
+
+    df["Amount"] = pd.to_numeric(df["Amount"], errors="coerce")
+    df = df.dropna(subset=["Amount"])
 
     orchestrator = Orchestrator()
     df, anomalies, score, advice, income, expense, forecast = orchestrator.execute(df)
@@ -123,7 +141,7 @@ if uploaded_file:
     st.markdown("---")
 
     # ===============================
-    # SUMMARY
+    # METRICS
     # ===============================
 
     col1, col2, col3 = st.columns(3)
@@ -144,13 +162,18 @@ if uploaded_file:
     # FORECAST
     # ===============================
 
-    st.subheader("📈 3-Month Cashflow Forecast")
+    st.subheader("📈 Cashflow Forecast")
 
     if forecast is not None:
-        fig2 = px.line(forecast, x="ds", y=["yhat", "yhat_upper", "yhat_lower"])
+        fig2 = px.line(
+            forecast,
+            x="Date",
+            y=["Amount", "Forecast"],
+            markers=True
+        )
         st.plotly_chart(fig2)
     else:
-        st.warning("Not enough historical data for forecasting (minimum 2 months required).")
+        st.warning("Not enough data available for forecasting.")
 
     # ===============================
     # BUDGET ALERTS
@@ -159,8 +182,12 @@ if uploaded_file:
     st.subheader("⚠ Budget Monitoring")
 
     spending = df.groupby("Category")["Amount"].sum().abs()
-    budgets = {"Food": food_budget, "Transport": transport_budget,
-               "Shopping": shopping_budget, "Other": other_budget}
+    budgets = {
+        "Food": food_budget,
+        "Transport": transport_budget,
+        "Shopping": shopping_budget,
+        "Other": other_budget
+    }
 
     for cat in budgets:
         if cat in spending:
@@ -193,7 +220,7 @@ if uploaded_file:
     st.markdown("---")
     st.subheader("💬 Conversational Financial AI")
 
-    user_input = st.chat_input("Ask about your financial health...", key="chat_input_box")
+    user_input = st.chat_input("Ask about your financial health...", key="chat_input")
 
     if user_input:
         st.session_state.messages.append({"role": "user", "content": user_input})
@@ -208,7 +235,7 @@ if uploaded_file:
 
         reply = None
 
-        if api_key:
+        if client:
             try:
                 response = client.chat.completions.create(
                     model="gpt-4o-mini",
@@ -224,11 +251,11 @@ if uploaded_file:
 
         if reply is None:
             if score > 75:
-                reply = "Strong financial position. Increase investments and diversify assets."
+                reply = "Strong financial position. Consider increasing investments."
             elif score > 50:
-                reply = "Moderate financial health. Reduce discretionary spending."
+                reply = "Financial health is moderate. Try reducing unnecessary expenses."
             else:
-                reply = "Financial risk detected. Cut non-essential expenses immediately."
+                reply = "Your spending risk is high. Immediate optimization needed."
 
         st.session_state.messages.append({"role": "assistant", "content": reply})
 
@@ -250,5 +277,4 @@ if uploaded_file:
     )
 
 else:
-
     st.info("Upload a CSV file to activate the AI system.")
