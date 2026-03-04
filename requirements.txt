@@ -3,6 +3,4 @@ pandas
 numpy
 scikit-learn
 plotly
-prophet==1.1.5
 openai
-
